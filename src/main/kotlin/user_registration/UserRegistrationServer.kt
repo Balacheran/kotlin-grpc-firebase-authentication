@@ -48,35 +48,44 @@ class UserRegistrationServer(private val port: Int) {
 
     private class UserRegistrationService : UserRegistrationGrpcKt.UserRegistrationCoroutineImplBase() {
         
+
         override suspend fun registerUser(request: User): BoolValue {
             return when (val result = FirebaseApiManager.registerNewUserWithEmailPassword(
                 request.email,
                 request.password
             )) {
                 is Success -> {
-                    val user = result.data?.let { request.updateUserWithGeneratedId(it) }
-                    when {
-                        user != null -> {
-                            when (FirebaseApiManager.storeUserData(user)) {
-                                is Success -> buildBoolVal(true)
-                                is Failure -> buildBoolVal(false)
+                    val userId = result.data
+                    if (userId != null) {
+                        // Create a new user with the Firebase ID
+                        val userWithId = request.toBuilder()
+                            .setId(userId)
+                            .build()
+                        
+                        when (FirebaseApiManager.storeUserData(userWithId)) {
+                            is Success -> {
+                                println("User registered with ID: $userId")
+                                buildBoolVal(true)
                             }
+                            is Failure -> buildBoolVal(false)
                         }
-                        else -> buildBoolVal(false)
+                    } else {
+                        buildBoolVal(false)
                     }
                 }
                 is Failure -> buildBoolVal(false)
             }
         }
-
         override suspend fun getUserInfo(request: StringValue): User {
+            println("Attempting to get user info for ID: ${request.value}")
             return when (val result = FirebaseApiManager.getUserFromId(request.value)) {
                 is Success -> {
-                    println("Get User Info: ${result.msg}")
-                    result.data ?: User.getDefaultInstance()
+                    val user = result.data
+                    println("Successfully retrieved user: ${user?.firstName} ${user?.lastName}")
+                    user ?: User.getDefaultInstance()
                 }
                 is Failure -> {
-                    println("Get User Info: ${result.msg}")
+                    println("Failed to get user info: ${result.msg}")
                     User.getDefaultInstance()
                 }
             }

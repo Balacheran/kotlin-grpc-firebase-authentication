@@ -1,44 +1,67 @@
 package user_registration
 
+import com.google.firebase.auth.FirebaseAuth
 import com.google.protobuf.StringValue
+import firebase_admin_sdk.FirebaseInitializer
 import io.grpc.ManagedChannel
 import io.grpc.ManagedChannelBuilder
+import kotlinx.coroutines.delay
+import service_utils.TokenUtils  
 import user_registration.UserRegistrationGrpcKt.UserRegistrationCoroutineStub
 import java.io.Closeable
 import java.util.concurrent.TimeUnit
 
 class UserRegistrationClient(private val channel: ManagedChannel) : Closeable {
     private val userStub: UserRegistrationCoroutineStub by lazy { UserRegistrationCoroutineStub(channel) }
+    var registeredUserId: String? = null
+        private set
 
-    suspend fun registerUser(user: User): Boolean {
-        userStub.registerUser(user).let {
-            return if (it.value) {
-                println("${user.firstName} is registered.")
-                true
-            } else {
-                println("Failed to register the user.")
-                false
-            }
+    init {
+        try {
+            FirebaseInitializer.initialize()
+        } catch (e: Exception) {
+            println("Failed to initialize Firebase in client: ${e.message}")
         }
     }
 
-    suspend fun getUserInfo(userId: StringValue): User {
-        userStub.getUserInfo(userId).let {
-            return if (it.isInitialized) {
-                println("Id: ${it.id}")
-                println("First Name: ${it.firstName}")
-                println("Last Name: ${it.lastName}")
-                println("Mobile Number: ${it.mobileNumber}")
-                println("Email: ${it.email}")
-                println("Address: ${it.address}")
-                println("Preferences: ${it.preferences}")
-                println("Latitude: ${it.location.latitude}")
-                println("Latitude: ${it.location.longitude}")
-                it
+    suspend fun registerUser(user: User): Boolean {
+        return try {
+            val response = userStub.registerUser(user)
+            if (response.value) {
+                // Store the registered user ID for later use
+                registeredUserId = getUserIdByEmail(user.email)
+                println("User registered with ID: $registeredUserId")
+                true
             } else {
-                println("No user found")
-                User.getDefaultInstance()
+                false
             }
+        } catch (e: Exception) {
+            println("Registration error: ${e.message}")
+            false
+        }
+    }
+
+    private suspend fun getUserIdByEmail(email: String): String? {
+        return try {
+            println("Attempting to get user by email: $email")
+            val userRecord = FirebaseAuth.getInstance().getUserByEmail(email)
+            println("Found user with ID: ${userRecord.uid}")
+            userRecord.uid
+        } catch (e: Exception) {
+            println("Error getting user ID by email: ${e.message}")
+            null
+        }
+    }
+
+    suspend fun getUserInfo(userId: String): User {
+        return try {
+            val request = StringValue.newBuilder().setValue(userId).build()
+            val response = userStub.getUserInfo(request)
+            println("Retrieved user info for ID $userId")
+            response
+        } catch (e: Exception) {
+            println("Error getting user info: ${e.message}")
+            User.getDefaultInstance()
         }
     }
 
@@ -78,15 +101,27 @@ class UserRegistrationClient(private val channel: ManagedChannel) : Closeable {
         }
     }
 
-    suspend fun verifyIdToken(customToken: StringValue): String {
-        userStub.verifyIdToken(customToken).let {
-            return if (it.value != "Error occurred") {
-                println("Id Token Decoded for User with uId: ${it.value}")
-                it.value
+    suspend fun verifyIdToken(customToken: String): String {
+        return try {
+            // First exchange custom token for ID token
+            println("Exchanging custom token for ID token...")
+            val idToken = TokenUtils.exchangeCustomTokenForIdToken(customToken)
+            println("Successfully obtained ID token")
+    
+            // Now verify the ID token
+            val request = StringValue.newBuilder().setValue(idToken).build()
+            val response = userStub.verifyIdToken(request)
+            
+            if (response.value != "Error occurred") {
+                println("ID Token verified successfully")
+                response.value
             } else {
-                println("Error occurred")
-                it.value
+                println("Failed to verify ID token")
+                "Error occurred"
             }
+        } catch (e: Exception) {
+            println("Error during token verification: ${e.message}")
+            "Error occurred"
         }
     }
 
@@ -97,20 +132,22 @@ class UserRegistrationClient(private val channel: ManagedChannel) : Closeable {
 
 }
 
-// UserRegistrationClient.kt
 suspend fun main() {
     println("Starting client...")
     val port = 50052
     var channel: ManagedChannel? = null
+    var userRegistrationClient: UserRegistrationClient? = null
     
     try {
-        println("Connecting to server on port $port...")
+        // Initialize Firebase first
+        FirebaseInitializer.initialize()
+        
         channel = ManagedChannelBuilder.forAddress("localhost", port)
             .usePlaintext()
             .build()
         
-        val client = UserRegistrationClient(channel)
-        
+        userRegistrationClient = UserRegistrationClient(channel)
+
         // Create a test user
         val location = Location.newBuilder()
             .setLatitude(71121212)
@@ -118,7 +155,6 @@ suspend fun main() {
             .build()
             
         val user = User.newBuilder()
-            .setId("testId123")
             .setFirstName("John")
             .setLastName("Doe")
             .setPassword("testPassword123")
@@ -130,15 +166,17 @@ suspend fun main() {
             .build()
 
         println("\n=== Attempting to register user ===")
-        try {
-            val registrationResult = client.registerUser(user)
-            println("Registration result: $registrationResult")
-            
-            if (registrationResult) {
-                // Get user info
-                println("\n=== Getting user info ===")
-                val userId = StringValue.newBuilder().setValue(user.id).build()
-                val userInfo = client.getUserInfo(userId)
+        val registrationSuccess = userRegistrationClient.registerUser(user)
+        println("Registration result: $registrationSuccess")
+        
+        if (registrationSuccess) {
+            // Add a small delay to allow Firebase to propagate
+            delay(2000) // 2 seconds delay
+            // Get the Firebase-generated user ID
+            val userId = userRegistrationClient.registeredUserId
+            if (userId != null) {
+                println("\n=== Getting user info for ID: $userId ===")
+                val userInfo = userRegistrationClient.getUserInfo(userId)
                 
                 // Display user info
                 println("\nUser Information:")
@@ -147,37 +185,40 @@ suspend fun main() {
                 println("Email: ${userInfo.email}")
                 println("Address: ${userInfo.address}")
                 println("Mobile: ${userInfo.mobileNumber}")
-                println("Preferences: ${userInfo.preferences}")
                 println("Location: (${userInfo.location.latitude}, ${userInfo.location.longitude})")
+
+                // Continue with other operations
+                val userIdValue = StringValue.newBuilder().setValue(userId).build()
                 
-                // Check admin status
+                println("\n=== Setting user as admin ===")
+                val setAdminResult = userRegistrationClient.setUserCustomClaims(userIdValue)
+                println("Set admin result: $setAdminResult")
+
                 println("\n=== Checking admin status ===")
-                val isAdmin = client.isUserAdmin(userId)
+                val isAdmin = userRegistrationClient.isUserAdmin(userIdValue)
                 println("Is admin: $isAdmin")
 
-                // Create custom token
                 println("\n=== Creating custom token ===")
-                val customToken = client.createCustomToken(userId)
+                val customToken = userRegistrationClient.createCustomToken(userIdValue)
                 println("Custom token: $customToken")
 
                 // Verify token
                 if (customToken != "Error occurred") {
                     println("\n=== Verifying token ===")
-                    val tokenValue = StringValue.newBuilder().setValue(customToken).build()
-                    val verifiedToken = client.verifyIdToken(tokenValue)
+                    val verifiedToken = userRegistrationClient.verifyIdToken(customToken)
                     println("Verified token result: $verifiedToken")
                 }
+            } else {
+                println("Failed to get user ID after registration")
             }
-        } catch (e: Exception) {
-            println("\nError during operations: ${e.message}")
-            e.printStackTrace()
         }
 
     } catch (e: Exception) {
-        println("\nFatal error: ${e.message}")
+        println("Fatal error: ${e.message}")
         e.printStackTrace()
     } finally {
-        println("\nShutting down client...")
+        userRegistrationClient?.close()
         channel?.shutdown()?.awaitTermination(5, TimeUnit.SECONDS)
+        println("\nShutting down client...")
     }
 }

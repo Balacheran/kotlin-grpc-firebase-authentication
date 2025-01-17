@@ -35,31 +35,15 @@ abstract class FirebaseAdminSdk : FirebaseUserInterface {
 }
 
 
-    init {
+     init {
         try {
-            val serviceAccount = FileInputStream("kotlin-grpc-firebase-adminsdk-ideda-8f9862ba21.json")
-            println("Service account file found")
-            
-            val options = FirebaseOptions.builder()
-                .setCredentials(GoogleCredentials.fromStream(serviceAccount))
-                .setProjectId("kotlin-grpc") // Your project ID
-                .setDatabaseUrl("https://kotlin-grpc.firebaseio.com") // Your database URL
-                .build()
-
-            if (FirebaseApp.getApps().isEmpty()) {
-                val firebaseApp = FirebaseApp.initializeApp(options)
-                println("Firebase initialized successfully")
-                db = FirestoreClient.getFirestore(firebaseApp)
-                println("Firestore initialized successfully")
-                initializeFirestoreCollections() // Add this line
-            } else {
-                println("Firebase already initialized")
-                db = FirestoreClient.getFirestore(FirebaseApp.getInstance())
-            }
+            FirebaseInitializer.initialize()
+            db = FirestoreClient.getFirestore()
+            println("Firestore initialized successfully")
+            initializeFirestoreCollections()
         } catch (e: Exception) {
-        println("Firebase initialization error: ${e.message}")
-        e.printStackTrace()
-        exitProcess(1)
+            println("Error initializing Firestore: ${e.message}")
+            throw e
         }
     }
 
