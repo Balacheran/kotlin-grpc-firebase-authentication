@@ -1,5 +1,23 @@
 import com.google.protobuf.gradle.*
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
+configurations.all {
+    resolutionStrategy {
+        force("org.slf4j:slf4j-api:1.7.36")
+        force("ch.qos.logback:logback-classic:1.2.11")
+        exclude(group = "org.slf4j", module = "slf4j-simple")
+        exclude(group = "org.slf4j", module = "slf4j-log4j12")
+    }
+}
+java {
+    sourceCompatibility = JavaVersion.VERSION_1_8
+    targetCompatibility = JavaVersion.VERSION_1_8
+}
+
+tasks.withType<KotlinCompile> {
+    kotlinOptions {
+        jvmTarget = "1.8"
+    }
+}
 
 val grpcVersion = "1.44.0"  // Updated version
 val grpcKotlinVersion = "1.2.1"  // Updated version
@@ -35,9 +53,8 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.9.3")
     implementation("org.json:json:20210307")
     implementation("io.github.cdimascio:dotenv-kotlin:6.4.1")
-    implementation("org.slf4j:slf4j-api:1.7.36")
-    implementation("ch.qos.logback:logback-classic:1.2.11")
-    implementation("org.slf4j:slf4j-simple:1.7.36")
+    implementation("org.slf4j:slf4j-api:2.0.9")
+    implementation("ch.qos.logback:logback-classic:1.4.11")
     runtimeOnly("io.grpc:grpc-netty-shaded:$grpcVersion")
     testImplementation(kotlin("test-junit"))
 }
